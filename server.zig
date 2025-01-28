@@ -70,7 +70,10 @@ pub const HttpServer = struct {
     }
 
     pub fn accept(self: HttpServer) !usize {
-        var addr: system.sockaddr = undefined;
+        var addr = system.sockaddr{
+            .family = 0,
+            .data = [_]u8{0} ** 14,
+        };
         var addr_len: system.socklen_t = @sizeOf(system.sockaddr);
 
         const new_socket = system.accept(
@@ -125,6 +128,9 @@ pub const HttpServer = struct {
 };
 
 pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
     var server = try HttpServer.create();
     defer server.deinit();
     const port: u16 = 8080;
@@ -159,21 +165,29 @@ pub fn main() !void {
         }
     };
 
+    var total_buffer = std.ArrayList(u8).init(allocator);
+    defer total_buffer.deinit();
+
+    var chunk_buffer: [1024]u8 = [_]u8{0} ** 1024;
+
     while (true) {
         const client_socket = try server.accept();
         const socket_number = @as(i32, @intCast(client_socket));
         defer _ = system.close(socket_number);
 
         //read from client socket
-        var buffer: [1024]u8 = undefined;
-        const bytes_read = system.read(socket_number, &buffer, buffer.len);
+        const bytes_read = system.read(socket_number, &chunk_buffer, chunk_buffer.len);
 
-        std.debug.print("Received: {s}\n", .{buffer[0..bytes_read]});
+        if (bytes_read == 0) break;
+
+        std.debug.print("Received: {s}\n", .{chunk_buffer[0..bytes_read]});
 
         // Send a basic response
         const response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!\n";
         _ = system.write(socket_number, response, response.len);
     }
+
+    defer total_buffer.deinit();
 
     const stdout = std.io.getStdOut().writer();
     try stdout.print("Hello, world!\n", .{});
